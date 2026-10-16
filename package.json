@@ -5,7 +5,7 @@
   "description": "KOPI — инвестиции со сдачи: эмулятор оплаты, round-up движок, пакетные покупки по реальному курсу, копилка и цели",
   "type": "module",
   "engines": {
-    "node": ">=22.13"
+    "node": "24.x"
   },
   "scripts": {
     "start": "node server/index.js",

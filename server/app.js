@@ -49,6 +49,8 @@ export function createApp(db, { rates = createRates(db) } = {}) {
   const user = DEMO_USER; // демо: один пользователь, авторизация — следующий этап
 
   const routes = {
+    'GET /api/health': async () => ({ ok: true }),
+
     'GET /api/state': async () => store.getState(user, await rates.current()),
 
     'GET /api/rates': async (req, url) => rates.current({ force: url.searchParams.has('refresh') }),

@@ -225,3 +225,12 @@ if (hash === 'pay' || hash === 'set') $('tab-' + hash).click();
 
 try { S = await api('GET', '/api/state'); render(); }
 catch (e) { toast('Сервер недоступен', e.message); }
+
+// Курс и стоимость портфеля обновляются сами, пока вкладка открыта
+const REFRESH_MS = 30_000;
+async function refresh() {
+  if (document.hidden || paying) return;
+  try { S = await api('GET', '/api/state'); render(); } catch { /* следующая попытка через REFRESH_MS */ }
+}
+setInterval(refresh, REFRESH_MS);
+document.addEventListener('visibilitychange', refresh);

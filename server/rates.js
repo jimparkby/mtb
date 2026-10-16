@@ -3,7 +3,7 @@
 // используется последний сохранённый курс, а если его нет — зашитая оценка.
 
 export const FALLBACK = { BTC: 200850, ETH: 8206, usd: 3.0113 };
-const TTL_MS = 60_000;
+const TTL_MS = 30_000;
 const TIMEOUT_MS = 6_000;
 
 async function getJson(url) {
