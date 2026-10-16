@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>KOPI — инвестиции со сдачи</title>
+<meta name="description" content="Демо KOPI: округляем покупки и вкладываем сдачу в BTC, ETH или консервативный актив.">
+<meta name="theme-color" content="#0B1F3A">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap">
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<div class="app">
+  <header class="top">
+    <div class="brand"><img src="logo.png" alt=""><b>KOPI</b><span class="demo">Демо</span></div>
+    <nav class="tabs" role="tablist">
+      <button role="tab" id="tab-home" aria-selected="true" data-tab="home">Копилка</button>
+      <button role="tab" id="tab-pay" aria-selected="false" data-tab="pay">Оплатить</button>
+      <button role="tab" id="tab-set" aria-selected="false" data-tab="set">Настройки</button>
+    </nav>
+  </header>
+
+  <!-- HOME -->
+  <section class="screen" id="home">
+    <div class="card hero">
+      <div class="label">Инвестировано со сдачи</div>
+      <div class="big num" id="totalValue">0</div>
+      <div class="row"><span class="num" id="investedLine"></span><span class="delta num" id="deltaLine"></span></div>
+    </div>
+
+    <div class="card">
+      <div class="row"><span class="label">Копилка сдачи</span><span class="note num" id="assetNow"></span></div>
+      <div class="row"><b class="num" style="font-size:22px" id="piggy">0</b><span class="note num" id="piggyOf"></span></div>
+      <div class="bar"><i id="piggyBar" style="width:0"></i></div>
+      <button class="btn secondary" id="buyNow" type="button">Купить сейчас</button>
+    </div>
+
+    <div class="card">
+      <div class="row"><span class="label">Цель</span><span class="note num" id="goalPct"></span></div>
+      <div class="row"><b id="goalName" style="font-size:17px"></b><span class="num" id="goalOf"></span></div>
+      <div class="bar"><i id="goalBar" style="width:0"></i></div>
+      <span class="note" id="goalHint"></span>
+    </div>
+
+    <div class="card">
+      <span class="label">Портфель</span>
+      <div class="assets" id="assets"></div>
+    </div>
+
+    <div class="card">
+      <div class="row"><span class="label">История</span><span class="note" id="histCount"></span></div>
+      <div class="hist" id="hist"></div>
+    </div>
+  </section>
+
+  <!-- PAY -->
+  <section class="screen" id="pay" hidden>
+    <div class="paycard">
+      <div class="row"><img src="logo.png" alt=""><span class="meta">Виртуальная карта</span></div>
+      <div class="pan num" id="cardPan">•••• •••• •••• ••••</div>
+      <div class="row"><span class="meta" id="cardHolder"></span><span class="meta" id="cardRule"></span></div>
+    </div>
+
+    <div class="card">
+      <span class="label">Эмулятор кассы</span>
+      <label class="amount" for="amountInput"><input id="amountInput" inputmode="decimal" autocomplete="off" value="6,40" aria-label="Сумма покупки, BYN"><span>BYN</span></label>
+      <div class="chips" id="presets"></div>
+      <button class="btn" id="payBtn" type="button">Оплатить картой</button>
+      <span class="note" id="payError" role="alert"></span>
+    </div>
+
+    <div class="card" id="receiptCard" hidden>
+      <span class="label">Чек</span>
+      <div class="receipt" id="receipt"></div>
+    </div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section class="screen" id="set" hidden>
+    <div class="card">
+      <span class="label">Округлять до</span>
+      <div class="chips" id="steps"></div>
+      <span class="label">Множитель сдачи</span>
+      <div class="chips" id="mults"></div>
+    </div>
+    <div class="card">
+      <span class="label">Куда вкладывать</span>
+      <div class="opts" id="assetOpts"></div>
+    </div>
+    <div class="card">
+      <span class="label">Покупать пакетом, когда в копилке</span>
+      <div class="chips" id="thresholds"></div>
+      <span class="note">Сдача копится и покупается одной операцией, чтобы комиссия не съедала копейки.</span>
+    </div>
+    <div class="card">
+      <span class="label">Цель накопления</span>
+      <div class="two">
+        <div class="field"><label class="note" for="goalNameInput">Название</label><input id="goalNameInput" maxlength="24"></div>
+        <div class="field"><label class="note" for="goalAmountInput">Сумма, BYN</label><input id="goalAmountInput" inputmode="numeric"></div>
+      </div>
+    </div>
+    <div class="card">
+      <span class="note" id="rateNote">Демо: оплаты эмулируются, деньги не списываются. Курс загружается…</span>
+      <button class="btn secondary" id="resetBtn" type="button">Начать демо заново</button>
+    </div>
+  </section>
+</div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

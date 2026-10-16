@@ -1,0 +1,15 @@
+{
+  "name": "kopi",
+  "version": "0.2.0",
+  "private": true,
+  "description": "KOPI — инвестиции со сдачи: эмулятор оплаты, round-up движок, пакетные покупки по реальному курсу, копилка и цели",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test"
+  }
+}
