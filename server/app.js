@@ -25,8 +25,16 @@ async function readJson(req) {
   catch { throw new HttpError(400, 'invalid JSON'); }
 }
 
+// Фронт может быть открыт с другого адреса (Live Server, GitHub Pages) — разрешаем CORS для API.
+const CORS = {
+  'access-control-allow-origin': '*',
+  'access-control-allow-methods': 'GET, POST, PUT, PATCH, OPTIONS',
+  'access-control-allow-headers': 'content-type',
+  'access-control-max-age': '86400',
+};
+
 function send(res, status, body) {
-  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...CORS });
   res.end(JSON.stringify(body));
 }
 
@@ -91,6 +99,10 @@ export function createApp(db, { rates = createRates(db) } = {}) {
   return createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     const handler = routes[`${req.method} ${url.pathname}`];
+    if (req.method === 'OPTIONS' && url.pathname.startsWith('/api/')) {
+      res.writeHead(204, CORS);
+      return res.end();
+    }
     try {
       if (handler) return send(res, 200, await handler(req, url));
       if (url.pathname.startsWith('/api/')) return send(res, 404, { error: 'not found' });

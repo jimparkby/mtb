@@ -1,12 +1,24 @@
 // Клиент KOPI: все расчёты и данные — на сервере (/api), здесь только отображение.
-const LOGO = 'logo.png';
+const LOGO = new URL('logo.png', import.meta.url).href;
 const PRESETS = [['Кофе', 640], ['Шаурма', 990], ['Такси', 1280], ['Продукты', 4730], ['Онлайн-заказ', 8915], ['Фастфуд', 1475]];
 const $ = (id) => document.getElementById(id);
 
 let S = null;
 
+// Если страница открыта не с нашего сервера (Live Server, file://, GitHub Pages),
+// запросы идут на бэкенд в Railway.
+const PROD_API = 'https://kopi-production-6db1.up.railway.app';
+const API_BASE = await (async () => {
+  if (location.protocol === 'file:') return PROD_API;
+  try {
+    const r = await fetch('/api/health', { signal: AbortSignal.timeout(3000) });
+    if (r.ok && (await r.json()).ok) return '';
+  } catch { /* своего бэкенда нет */ }
+  return PROD_API;
+})();
+
 async function api(method, path, body) {
-  const res = await fetch(path, {
+  const res = await fetch(API_BASE + path, {
     method,
     headers: body ? { 'content-type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined,
