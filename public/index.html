@@ -27,9 +27,11 @@
   <!-- HOME -->
   <section class="screen" id="home">
     <div class="card hero">
-      <div class="label">Инвестировано со сдачи</div>
+      <div class="row"><span class="label">Инвестировано со сдачи</span><span class="live" id="liveBadge" hidden><i></i><span id="liveSrc"></span></span></div>
       <div class="big num" id="totalValue">0</div>
       <div class="row"><span class="num" id="investedLine"></span><span class="delta num" id="deltaLine"></span></div>
+      <svg class="spark" id="spark" viewBox="0 0 300 64" preserveAspectRatio="none" aria-hidden="true"><path class="area"></path><path class="line"></path></svg>
+      <div class="row"><span class="note num" id="sparkFrom"></span><span class="note num" id="sparkDelta"></span></div>
     </div>
 
     <div class="card">

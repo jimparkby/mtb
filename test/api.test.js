@@ -2,7 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { openDb } from '../server/db.js';
 import { createApp } from '../server/app.js';
-import { createRates } from '../server/rates.js';
+import { createRates, fetchCrypto } from '../server/rates.js';
 
 let server, base, fetches = 0;
 
@@ -28,6 +28,8 @@ test('state is seeded and priced at the live rate', async () => {
   assert.equal(body.rates.BTC, 250000);
   assert.ok(body.totals.invested > 0);
   assert.ok(body.history.length > 0);
+  // демо-покупки сделаны на 2,4% ниже текущего курса
+  assert.ok(Math.abs(body.totals.profitPct - 2.4) < 0.1, `profit ${body.totals.profitPct}`);
 });
 
 test('payment rounds up into the piggy bank and batch-buys at threshold', async () => {
@@ -86,4 +88,40 @@ test('static files are served and traversal is blocked', async () => {
   assert.equal(res.status, 200);
   assert.match(await res.text(), /KOPI/);
   assert.notEqual((await fetch(base + '/..%2Fpackage.json')).status, 200);
+});
+
+test('ticks endpoint returns live rates for the chart', async () => {
+  await call('GET', '/api/rates?refresh');
+  const { status, body } = await call('GET', '/api/ticks');
+  assert.equal(status, 200);
+  assert.ok(body.ticks.length > 0);
+  assert.equal(body.ticks.at(-1).BTC, 250000);
+});
+
+test('falls through to the next exchange when one is unavailable', async () => {
+  const r = await fetchCrypto([
+    ['Down', async () => { throw new Error('HTTP 451'); }],
+    ['Broken', async () => ({ BTC: NaN, ETH: 1 })],
+    ['Up', async () => ({ BTC: 80000, ETH: 2400 })],
+  ]);
+  assert.deepEqual(r, { BTC: 80000, ETH: 2400, exchange: 'Up' });
+  await assert.rejects(fetchCrypto([['Down', async () => { throw new Error('x'); }]]), /Down: x/);
+});
+
+test('failed refresh falls back to the last known rate without hammering the API', async () => {
+  const db = openDb(':memory:');
+  let calls = 0, fail = false, t = Date.parse('2026-10-18T10:00:00Z');
+  const rates = createRates(db, { now: () => t,
+    fetcher: async () => { calls++; if (fail) throw new Error('down'); return { BTC: 1, ETH: 2, usd: 3, exchange: 'X' }; } });
+  await rates.current();
+  fail = true; t += 10_000;
+  const r = await rates.current();
+  assert.equal(r.stale, true);
+  assert.equal(r.BTC, 1);
+  const n = calls; t += 1_000;
+  assert.equal((await rates.current()).stale, true);
+  assert.equal(calls, n);
+  t += 5_000;
+  await rates.current();
+  assert.equal(calls, n + 1);
 });

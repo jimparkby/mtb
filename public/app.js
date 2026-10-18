@@ -4,6 +4,8 @@ const PRESETS = [['Кофе', 640], ['Шаурма', 990], ['Такси', 1280],
 const $ = (id) => document.getElementById(id);
 
 let S = null;
+let ticks = []; // курс за последний час: { t, BTC, ETH }
+let prev = null; // прошлое состояние — чтобы подсветить, что выросло, а что упало
 
 // Если страница открыта не с нашего сервера (Live Server, file://, GitHub Pages),
 // запросы идут на бэкенд в Railway.
@@ -54,11 +56,58 @@ function toastPurchase(p) {
       : fmtQty(p.qty, p.asset) + ' ' + p.asset + ' по курсу ' + Math.round(p.rate).toLocaleString('ru-RU') + ' BYN');
 }
 
+// Подсвечивает элемент зелёным или красным, если число изменилось с прошлого рендера
+function flash(el, now, before) {
+  if (before == null || now === before) return;
+  el.classList.remove('flash-up', 'flash-down'); void el.offsetWidth;
+  el.classList.add(now > before ? 'flash-up' : 'flash-down');
+}
+
+function addTick(r) {
+  if (r.source !== 'live' || !r.fetchedAt) return;
+  if (ticks.length && ticks[ticks.length - 1].t >= r.fetchedAt) return;
+  ticks.push({ t: r.fetchedAt, BTC: r.BTC, ETH: r.ETH });
+  const hourAgo = new Date(Date.now() - 3_600_000).toISOString();
+  while (ticks.length > 2 && ticks[0].t < hourAgo) ticks.shift();
+}
+
+// Сколько стоил бы текущий портфель по каждому тику курса — так видно, как меняется капитал
+function renderSpark() {
+  const svg = $('spark');
+  const fixed = S.holdings.filter((h) => h.asset === 'SAFE').reduce((s, h) => s + h.value, 0);
+  const crypto = S.holdings.filter((h) => h.asset !== 'SAFE' && h.qty > 0);
+  const pts = ticks.map((t) => fixed + crypto.reduce((s, h) => s + Math.round(h.qty * t[h.asset] * 100), 0));
+  if (pts.length < 2 || !crypto.length) {
+    svg.hidden = true;
+    $('sparkFrom').textContent = crypto.length ? 'График появится через пару обновлений курса' : '';
+    $('sparkDelta').textContent = '';
+    return;
+  }
+  svg.hidden = false;
+  const min = Math.min(...pts), max = Math.max(...pts), span = max - min || 1;
+  const W = 300, H = 64, pad = 4;
+  const xy = pts.map((v, i) => [i / (pts.length - 1) * W, pad + (1 - (v - min) / span) * (H - 2 * pad)]);
+  const line = xy.map(([x, y], i) => (i ? 'L' : 'M') + x.toFixed(1) + ' ' + y.toFixed(1)).join(' ');
+  svg.querySelector('.line').setAttribute('d', line);
+  svg.querySelector('.area').setAttribute('d', line + ' L' + W + ' ' + H + ' L0 ' + H + ' Z');
+  const d = pts[pts.length - 1] - pts[0];
+  svg.classList.toggle('down', d < 0);
+  $('sparkFrom').textContent = 'С ' + new Date(ticks[0].t).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  $('sparkDelta').textContent = (d >= 0 ? '+' : '−') + fmt(Math.abs(d)) + ' BYN (' + fmtPct(pts[0] ? d / pts[0] * 100 : 0) + ')';
+}
+
 function render() {
   const { totals, settings, goal, piggy, holdings, history, stats, rates, user } = S;
   const A = S.options.assets[settings.asset];
+  addTick(rates);
 
   $('totalValue').innerHTML = fmt(totals.value) + ' <small>BYN</small>';
+  if (prev && prev.invested === totals.invested) flash($('totalValue'), totals.value, prev.value);
+  const lb = $('liveBadge');
+  lb.hidden = rates.source !== 'live';
+  lb.classList.toggle('stale', !!rates.stale);
+  $('liveSrc').textContent = (rates.stale ? 'Нет связи · ' : 'Live · ') + (rates.exchange || 'биржа');
+  renderSpark();
   $('investedLine').textContent = 'Вложено ' + fmt(totals.invested) + ' BYN';
   $('deltaLine').textContent = fmtPct(totals.profitPct);
   $('deltaLine').className = 'delta num ' + (totals.profitPct >= 0 ? 'up' : 'down');
@@ -88,6 +137,10 @@ function render() {
     row.querySelectorAll('.sub')[0].textContent = h.asset === 'SAFE' ? 'без изменения курса'
       : fmtQty(h.qty, h.asset) + ' ' + h.asset + ' · курс ' + Math.round(h.rate).toLocaleString('ru-RU') + ' BYN';
     row.querySelectorAll('b')[1].textContent = fmt(h.value) + ' BYN';
+    if (h.asset !== 'SAFE') {
+      flash(row.querySelectorAll('.sub')[0], h.rate, prev?.rates[h.asset]);
+      if (prev?.qty[h.asset] === h.qty) flash(row.querySelectorAll('b')[1], h.value, prev.values[h.asset]);
+    }
     const s2 = row.querySelectorAll('.sub')[1];
     const dd = h.cost ? (h.value - h.cost) / h.cost * 100 : 0;
     s2.textContent = h.cost ? fmtPct(dd) : 'пока пусто';
@@ -118,10 +171,15 @@ function render() {
   $('cardHolder').textContent = user.name;
   $('cardRule').textContent = 'Округление до ' + fmtInt(settings.round_step) + ' BYN' + (settings.multiplier > 1 ? ' ×' + settings.multiplier : '');
   $('rateNote').textContent = 'Демо: оплаты эмулируются, деньги не списываются. ' + (rates.source === 'live'
-    ? 'Курс реальный: CoinGecko × официальный курс НБРБ (' + rates.usd.toLocaleString('ru-RU') + ' BYN за $1), обновлён ' + fmtWhen(rates.fetchedAt) + (rates.stale ? ' — сейчас API недоступен' : '') + '.'
+    ? 'Курс реальный: спот ' + (rates.exchange || 'биржи') + ' × официальный курс НБРБ (' + rates.usd.toLocaleString('ru-RU') + ' BYN за $1), обновляется каждые 5 секунд, последний раз в ' + new Date(rates.fetchedAt).toLocaleTimeString('ru-RU') + (rates.stale ? ' — сейчас биржи недоступны' : '') + '.'
     : 'Курс API недоступен, используется оценка на октябрь 2026.')
     + ' Покупка криптовалюты в продукте — через биржу-резидента ПВТ.';
   renderSettings();
+  prev = {
+    invested: totals.invested, value: totals.value, rates: { ...rates },
+    qty: Object.fromEntries(holdings.map((h) => [h.asset, h.qty])),
+    values: Object.fromEntries(holdings.map((h) => [h.asset, h.value])),
+  };
 }
 
 async function patchSettings(patch) {
@@ -235,11 +293,14 @@ document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => {
 const hash = location.hash.slice(1);
 if (hash === 'pay' || hash === 'set') $('tab-' + hash).click();
 
-try { S = await api('GET', '/api/state'); render(); }
+try {
+  const [state, t] = await Promise.all([api('GET', '/api/state'), api('GET', '/api/ticks').catch(() => ({ ticks: [] }))]);
+  ticks = t.ticks ?? []; S = state; render();
+}
 catch (e) { toast('Сервер недоступен', e.message); }
 
 // Курс и стоимость портфеля обновляются сами, пока вкладка открыта
-const REFRESH_MS = 30_000;
+const REFRESH_MS = 5_000;
 async function refresh() {
   if (document.hidden || paying) return;
   try { S = await api('GET', '/api/state'); render(); } catch { /* следующая попытка через REFRESH_MS */ }

@@ -215,7 +215,8 @@ export function createStore(db) {
   }
 
   // Демо-данные: три прошлые пакетные покупки и неделя покупок Ивана.
-  function seed(userId = DEMO_USER) {
+  // Прошлые покупки считаются от текущего курса (на 2,4% ниже), чтобы доходность была правдоподобной.
+  function seed(userId = DEMO_USER, rates = FALLBACK) {
     tx(db, () => {
       db.prepare('DELETE FROM users WHERE id = ?').run(userId);
       db.prepare('INSERT INTO users (id, name, card_last4, created_at) VALUES (?, ?, ?, ?)')
@@ -225,7 +226,7 @@ export function createStore(db) {
     });
 
     const day = 86_400_000, start = Date.now() - 10 * day;
-    const past = { BTC: FALLBACK.BTC / 1.024, ETH: FALLBACK.ETH / 1.024, SAFE: 1, source: 'seed' };
+    const past = { BTC: rates.BTC / 1.024, ETH: rates.ETH / 1.024, SAFE: 1, source: 'seed' };
     for (let i = 0; i < 3; i++) {
       const at = new Date(start + i * day).toISOString();
       const qty = quantity(2000, 'BTC', past.BTC);
@@ -236,8 +237,8 @@ export function createStore(db) {
     week.forEach(([m, a], i) => addPayment(userId, m, a, past, new Date(start + 3 * day + i * day / 2).toISOString()));
   }
 
-  function ensureSeeded() {
-    if (!q.user.get(DEMO_USER)) seed(DEMO_USER);
+  function ensureSeeded(rates) {
+    if (!q.user.get(DEMO_USER)) seed(DEMO_USER, rates);
   }
 
   return { addPayment, buyNow, updateSettings, updateGoal, getState, seed, ensureSeeded };

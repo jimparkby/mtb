@@ -53,7 +53,7 @@ async function serveStatic(res, pathname) {
 
 export function createApp(db, { rates = createRates(db) } = {}) {
   const store = createStore(db);
-  store.ensureSeeded();
+  store.ensureSeeded(rates.cached());
   const user = DEMO_USER; // демо: один пользователь, авторизация — следующий этап
 
   const routes = {
@@ -62,6 +62,9 @@ export function createApp(db, { rates = createRates(db) } = {}) {
     'GET /api/state': async () => store.getState(user, await rates.current()),
 
     'GET /api/rates': async (req, url) => rates.current({ force: url.searchParams.has('refresh') }),
+
+    // Тики курса за последний час — для графика стоимости портфеля
+    'GET /api/ticks': async () => ({ ticks: rates.ticks() }),
 
     // Эмулятор оплаты: сумма приходит строкой ("6,40") или числом в копейках (amountKop).
     'POST /api/payments': async (req) => {
@@ -91,8 +94,9 @@ export function createApp(db, { rates = createRates(db) } = {}) {
     },
 
     'POST /api/reset': async () => {
-      store.seed(user);
-      return store.getState(user, await rates.current());
+      const r = await rates.current();
+      store.seed(user, r);
+      return store.getState(user, r);
     },
   };
 
