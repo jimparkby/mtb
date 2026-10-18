@@ -2,7 +2,6 @@ import { join } from 'node:path';
 import { openDatabase } from './database.js';
 import { createApp } from './app.js';
 import { createRates } from './rates.js';
-import { paymentsFromEnv } from './payments.js';
 import { brokerFromEnv } from './broker.js';
 
 const env = process.env;
@@ -19,15 +18,9 @@ console.log(`База: ${db.dialect}${db.dialect === 'sqlite' ? ' ' + target : '
 const rates = await createRates(db);
 await rates.start(); // первый курс до создания демо-данных, чтобы они считались от реального курса
 
-const payments = paymentsFromEnv(env);
 const broker = brokerFromEnv(env);
-const app = await createApp(db, {
-  rates, payments, broker,
-  bankWebhookSecret: env.BANK_WEBHOOK_SECRET || null,
-  publicUrl: env.PUBLIC_URL || (env.RAILWAY_PUBLIC_DOMAIN && `https://${env.RAILWAY_PUBLIC_DOMAIN}`) || null,
-});
-console.log(`Платежи: ${payments ? payments.name + (payments.test ? ' (тест)' : '') : 'не подключены'}; брокер: ${broker.name}; ` +
-  `вебхук банка: ${env.BANK_WEBHOOK_SECRET ? 'включён' : 'выключен'}`);
+const app = await createApp(db, { rates, broker });
+console.log(`Брокер: ${broker.name}`);
 
 // Сверка покупок: докупить списанное, пометить зависшее
 setInterval(() => app.purchaser.reconcile().catch((err) => console.error('[reconcile]', err)), 60_000).unref();

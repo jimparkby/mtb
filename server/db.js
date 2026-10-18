@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import {
   ASSETS, STEPS, MULTIPLIERS, THRESHOLDS,
   roundUp, quantity, positionValue, shouldBuy, forecastMonths,
@@ -11,7 +10,6 @@ export class HttpError extends Error {
 
 const nowIso = () => new Date().toISOString();
 const USER_COLS = 'id, name, email, card_last4, is_demo, guest, created_at';
-const CARD_COLS = 'id, user_id, ref, provider, status, checkout_token, card_token, last4, brand, error, created_at, updated_at';
 const PURCHASE_COLS = 'id, user_id, asset, amount, rate, qty, rate_source, status, charge_ref, order_ref, error, created_at, updated_at';
 const PIGGY_SQL = 'SELECT COALESCE(SUM(roundup), 0) AS piggy FROM payments WHERE user_id = ? AND purchase_id IS NULL';
 
@@ -26,20 +24,6 @@ export function createStore(db) {
 
   // ---------- пользователи и сессии ----------
 
-  async function createUser({ email, name, passwordHash }) {
-    return db.tx(async (t) => {
-      if (await t.get('SELECT id FROM users WHERE email = ?', [email])) throw new HttpError(409, 'Этот email уже зарегистрирован');
-      const id = await t.insert('INSERT INTO users (name, email, password_hash, card_last4, is_demo, created_at) VALUES (?, ?, ?, ?, 0, ?)',
-        [name, email, passwordHash, '', nowIso()]);
-      await t.run('INSERT INTO settings (user_id) VALUES (?)', [id]);
-      await t.run('INSERT INTO goals (user_id, name, target) VALUES (?, ?, ?)', [id, 'Первая цель', 100000]);
-      return getUser(id, t);
-    });
-  }
-
-  const findUserByEmail = (email) =>
-    db.get('SELECT id, password_hash FROM users WHERE email = ? AND is_demo = 0', [email]);
-
   async function createSession(userId, tokenHash, ttlMs) {
     const at = Date.now();
     await db.run('INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)',
@@ -50,56 +34,6 @@ export function createStore(db) {
     return row && getUser(row.user_id);
   }
   const deleteSession = (tokenHash) => db.run('DELETE FROM sessions WHERE token_hash = ?', [tokenHash]);
-
-  // ---------- пересылка уведомлений банка ----------
-
-  async function setIngestToken(userId, tokenHash) {
-    await db.tx(async (t) => {
-      await t.run('DELETE FROM ingest_tokens WHERE user_id = ?', [userId]);
-      await t.run('INSERT INTO ingest_tokens (token_hash, user_id, created_at) VALUES (?, ?, ?)', [tokenHash, userId, nowIso()]);
-    });
-  }
-  const deleteIngestToken = (userId) => db.run('DELETE FROM ingest_tokens WHERE user_id = ?', [userId]);
-  async function userByIngestToken(tokenHash) {
-    const row = await db.get('SELECT user_id FROM ingest_tokens WHERE token_hash = ?', [tokenHash]);
-    return row && getUser(row.user_id);
-  }
-
-  // ---------- карты ----------
-
-  async function createCard(userId, provider) {
-    const at = nowIso();
-    const id = await db.insert(`INSERT INTO cards (user_id, ref, provider, status, created_at, updated_at)
-                                VALUES (?, ?, ?, 'pending', ?, ?)`, [userId, randomUUID(), provider, at, at]);
-    return getCard(id);
-  }
-  const getCard = (id) => db.get(`SELECT ${CARD_COLS} FROM cards WHERE id = ?`, [id]);
-  const cardByRef = (ref) => db.get(`SELECT ${CARD_COLS} FROM cards WHERE ref = ?`, [ref]);
-  const activeCard = (userId) =>
-    db.get(`SELECT ${CARD_COLS} FROM cards WHERE user_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1`, [userId]);
-  const latestCard = (userId) =>
-    db.get(`SELECT ${CARD_COLS} FROM cards WHERE user_id = ? AND status <> 'removed' ORDER BY id DESC LIMIT 1`, [userId]);
-
-  // Активная карта у пользователя одна: новая заменяет прежнюю
-  async function updateCard(id, patch) {
-    return db.tx(async (t) => {
-      const card = await t.get(`SELECT ${CARD_COLS} FROM cards WHERE id = ?`, [id]);
-      if (!card) throw new HttpError(404, 'card not found');
-      const next = { ...card, ...patch, updated_at: nowIso() };
-      if (patch.status === 'active') {
-        await t.run(`UPDATE cards SET status = 'removed', updated_at = ? WHERE user_id = ? AND status = 'active' AND id <> ?`,
-          [next.updated_at, card.user_id, id]);
-        await t.run('UPDATE users SET card_last4 = ? WHERE id = ?', [next.last4 ?? '', card.user_id]);
-      }
-      if (patch.status === 'removed' && card.status === 'active') {
-        await t.run('UPDATE users SET card_last4 = ? WHERE id = ?', ['', card.user_id]);
-      }
-      await t.run(`UPDATE cards SET status = ?, checkout_token = ?, card_token = ?, last4 = ?, brand = ?, error = ?, updated_at = ?
-                   WHERE id = ?`,
-        [next.status, next.checkout_token, next.card_token, next.last4, next.brand, next.error, next.updated_at, id]);
-      return next;
-    });
-  }
 
   // ---------- оплаты и копилка ----------
 
@@ -233,12 +167,8 @@ export function createStore(db) {
         || (a.type === b.type ? b.id - a.id : a.type === 'buy' ? -1 : 1))
      .slice(0, historyLimit);
 
-    const card = user.is_demo ? null : await latestCard(userId);
-    const ingest = user.is_demo ? null : await db.get('SELECT created_at FROM ingest_tokens WHERE user_id = ?', [userId]);
     return {
       user: { id: user.id, name: user.name, email: user.email, card_last4: user.card_last4, is_demo: !!user.is_demo, guest: !!user.guest },
-      card: card ? { id: card.id, ref: card.ref, provider: card.provider, status: card.status, last4: card.last4, brand: card.brand, error: card.error } : null,
-      sms: { connected: !!ingest, since: ingest?.created_at ?? null },
       settings,
       piggy,
       inFlight: inflight,
@@ -316,9 +246,7 @@ export function createStore(db) {
   }
 
   return {
-    getUser, createUser, findUserByEmail, createSession, userBySession, deleteSession,
-    setIngestToken, deleteIngestToken, userByIngestToken,
-    createCard, getCard, cardByRef, activeCard, latestCard, updateCard,
+    getUser, createSession, userBySession, deleteSession,
     addPayment, claimNow, getPurchase, purchasesByStatus, markPurchase, failPurchase,
     updateSettings, updateGoal, getState, demoUserId, seedDemo, ensureDemo, fillDemo, createGuest, cleanupGuests,
   };

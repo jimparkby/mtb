@@ -5,23 +5,11 @@
 // STUCK_MS уходит в review — деньги могли списаться, нужен человек.
 const STUCK_MS = 10 * 60_000;
 
-export function createPurchaser({ store, rates, payments, broker, now = () => Date.now() }) {
+export function createPurchaser({ store, rates, broker, now = () => Date.now() }) {
+  // Списание с привязанной карты — в ветке accounts; здесь только демо
   async function charge(purchase, user) {
     if (user.is_demo) return store.markPurchase(purchase.id, { status: 'charged', charge_ref: 'demo' });
-    if (!payments) return store.failPurchase(purchase.id, 'Платёжный провайдер не подключён');
-    const card = await store.activeCard(user.id);
-    if (!card) return store.failPurchase(purchase.id, 'Карта не привязана');
-    let r;
-    try {
-      r = await payments.charge({ cardToken: card.card_token, amount: purchase.amount,
-        trackingId: `kopi-purchase-${purchase.id}`, description: 'KOPI: сдача на покупку ' + purchase.asset });
-    } catch (err) {
-      // Ответа нет — неизвестно, списались ли деньги. Оставляем pending, сверка разберётся.
-      console.error('[purchaser] charge error', purchase.id, err.message);
-      return store.markPurchase(purchase.id, { error: 'Нет ответа от платёжного провайдера' });
-    }
-    if (r.status !== 'successful') return store.failPurchase(purchase.id, r.message || 'Списание отклонено');
-    return store.markPurchase(purchase.id, { status: 'charged', charge_ref: r.ref, error: null });
+    return store.failPurchase(purchase.id, 'Списание с карты не подключено');
   }
 
   async function fill(purchase, user) {

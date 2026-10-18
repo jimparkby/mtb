@@ -1,6 +1,11 @@
 import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { DatabaseSync } from 'node:sqlite';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createApp } from '../server/app.js';
+import { openDatabase } from '../server/database.js';
 import { createRates, fetchCrypto } from '../server/rates.js';
 import { DIALECTS, openTestDb, listen } from './helpers.js';
 
@@ -114,9 +119,9 @@ for (const dialect of DIALECTS) {
       assert.equal(reset.body.piggy, s1.piggy);
       assert.equal((await call('GET', '/api/state', null, g2.token)).body.piggy, s1.piggy + 90);
 
-      // гостю недоступно то, что требует аккаунта
-      assert.equal((await call('POST', '/api/cards', null, g1.token)).status, 403);
-      assert.equal((await call('POST', '/api/sms-link', null, g1.token)).status, 403);
+      // аккаунтов, карт и SMS в этой версии нет
+      assert.equal((await call('POST', '/api/auth/register', { email: 'a@b.by', password: '12345678', name: 'A' })).status, 404);
+      assert.equal((await call('POST', '/api/cards', null, g1.token)).status, 404);
 
       // гость без живой сессии удаляется, остальные остаются
       await call('POST', '/api/auth/logout', null, g1.token);
@@ -163,4 +168,45 @@ test('failed refresh falls back to the last known rate without hammering the API
   await rates.current();
   assert.equal(calls, n + 1);
   await close();
+});
+
+test('an existing SQLite database from the demo version is migrated in place', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kopi-'));
+  const path = join(dir, 'old.db');
+  const old = new DatabaseSync(path);
+  old.exec(`
+    CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, card_last4 TEXT NOT NULL, created_at TEXT NOT NULL);
+    CREATE TABLE settings (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, round_step INTEGER NOT NULL DEFAULT 100,
+      multiplier INTEGER NOT NULL DEFAULT 1, asset TEXT NOT NULL DEFAULT 'BTC', threshold INTEGER NOT NULL DEFAULT 2000);
+    CREATE TABLE goals (user_id INTEGER PRIMARY KEY, name TEXT NOT NULL, target INTEGER NOT NULL);
+    CREATE TABLE purchases (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, asset TEXT NOT NULL, amount INTEGER NOT NULL,
+      rate REAL NOT NULL, qty REAL NOT NULL, rate_source TEXT NOT NULL, created_at TEXT NOT NULL);
+    CREATE TABLE payments (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, merchant TEXT NOT NULL, amount INTEGER NOT NULL,
+      rounded INTEGER NOT NULL, roundup INTEGER NOT NULL, round_step INTEGER NOT NULL, multiplier INTEGER NOT NULL,
+      purchase_id INTEGER, created_at TEXT NOT NULL);
+    CREATE TABLE rates (id INTEGER PRIMARY KEY, btc REAL NOT NULL, eth REAL NOT NULL, usd_byn REAL NOT NULL, source TEXT NOT NULL, fetched_at TEXT NOT NULL);
+    INSERT INTO users VALUES (1, 'Иван К.', '4821', '2026-10-01T00:00:00Z');
+    INSERT INTO settings (user_id) VALUES (1);
+    INSERT INTO goals VALUES (1, 'Ноутбук', 200000);
+    INSERT INTO purchases VALUES (1, 1, 'BTC', 2000, 240000, 0.0000833, 'live', '2026-10-02T00:00:00Z');
+    INSERT INTO payments VALUES (1, 1, 'Кофе', 640, 700, 60, 100, 1, NULL, '2026-10-03T00:00:00Z');
+  `);
+  old.close();
+
+  const db = await openDatabase(path);
+  const rates = await createRates(db, { fetcher: async () => ({ BTC: 250000, ETH: 10000, usd: 3.2 }) });
+  const server = await createApp(db, { rates });
+  const { call } = await listen(server);
+  const s = (await call('GET', '/api/state')).body;
+  assert.equal(s.user.id, 1);
+  assert.equal(s.user.is_demo, true);
+  assert.equal(s.totals.invested, 2000, 'old purchases count as filled');
+  assert.equal(s.piggy, 60);
+  server.close();
+  await db.close();
+  // повторное открытие не применяет миграции заново
+  const again = await openDatabase(path);
+  assert.equal((await again.all('SELECT version FROM schema_migrations')).length, 4);
+  await again.close();
+  rmSync(dir, { recursive: true, force: true });
 });
