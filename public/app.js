@@ -214,7 +214,7 @@ function chipGroup(id, items, current, onPick) {
 function renderSettings() {
   const { settings, options, goal } = S;
   chipGroup('steps', options.steps.map((v) => [v, fmtInt(v) + ' BYN']), settings.round_step, (v) => patchSettings({ round_step: v }));
-  chipGroup('mults', options.multipliers.map((v) => [v, '×' + v, v > 1 ? 'PREMIUM' : '']), settings.multiplier, (v) => patchSettings({ multiplier: v }));
+  chipGroup('mults', options.multipliers.map((v) => [v, '×' + v]), settings.multiplier, (v) => patchSettings({ multiplier: v }));
   chipGroup('thresholds', options.thresholds.map((v) => [v, fmtInt(v) + ' BYN']), settings.threshold, (v) => patchSettings({ threshold: v }));
   const ao = $('assetOpts'); ao.innerHTML = '';
   Object.entries(options.assets).forEach(([a, info]) => {
