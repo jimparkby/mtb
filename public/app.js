@@ -171,7 +171,10 @@ function render() {
   $('cardHolder').textContent = user.name;
   $('cardRule').textContent = 'Округление до ' + fmtInt(settings.round_step) + ' BYN' + (settings.multiplier > 1 ? ' ×' + settings.multiplier : '');
   $('rateNote').textContent = 'Демо: оплаты эмулируются, деньги не списываются. ' + (rates.source === 'live'
-    ? 'Курс реальный: спот ' + (rates.exchange || 'биржи') + ' × официальный курс НБРБ (' + rates.usd.toLocaleString('ru-RU') + ' BYN за $1), обновляется каждые 5 секунд, последний раз в ' + new Date(rates.fetchedAt).toLocaleTimeString('ru-RU') + (rates.stale ? ' — сейчас биржи недоступны' : '') + '.'
+    ? 'Курс реальный: ' + (rates.currency === 'BYN'
+        ? 'BTC/BYN и ETH/BYN на ' + rates.exchange + ' (резидент ПВТ), середина между покупкой и продажей'
+        : 'спот ' + (rates.exchange || 'биржи') + ' × официальный курс НБРБ (' + rates.usd.toLocaleString('ru-RU') + ' BYN за $1)')
+      + ', обновляется каждые 5 секунд, последний раз в ' + new Date(rates.fetchedAt).toLocaleTimeString('ru-RU') + (rates.stale ? ' — сейчас биржи недоступны' : '') + '.'
     : 'Курс API недоступен, используется оценка на октябрь 2026.')
     + ' Покупка криптовалюты в продукте — через биржу-резидента ПВТ.';
   renderSettings();

@@ -104,7 +104,9 @@ test('falls through to the next exchange when one is unavailable', async () => {
     ['Broken', async () => ({ BTC: NaN, ETH: 1 })],
     ['Up', async () => ({ BTC: 80000, ETH: 2400 })],
   ]);
-  assert.deepEqual(r, { BTC: 80000, ETH: 2400, exchange: 'Up' });
+  assert.deepEqual(r, { BTC: 80000, ETH: 2400, exchange: 'Up', currency: 'USD' });
+  const byn = await fetchCrypto([['ПВТ', async () => ({ BTC: 245000, ETH: 7300 }), 'BYN']]);
+  assert.equal(byn.currency, 'BYN');
   await assert.rejects(fetchCrypto([['Down', async () => { throw new Error('x'); }]]), /Down: x/);
 });
 

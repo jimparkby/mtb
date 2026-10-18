@@ -1,5 +1,8 @@
-// Реальный курс: цена спота на бирже (USD/USDT) × официальный курс НБРБ (BYN за $1).
-// Биржи опрашиваются по очереди: если одна недоступна (например, Binance отвечает 451
+// Реальный курс. Сначала — белорусские площадки-резиденты ПВТ, где пара сразу в рублях
+// (BTC/BYN, ETH/BYN): берём середину между ценой покупки и продажи — она двигается
+// с каждой котировкой, а не только при сделке. Если они недоступны — мировые биржи
+// (USD/USDT) × официальный курс НБРБ (BYN за $1).
+// Площадки опрашиваются по очереди: если одна недоступна (например, Binance отвечает 451
 // для серверов в США), берётся следующая. Курс НБРБ меняется раз в день и кэшируется на час.
 // Тики держатся в памяти для графика, в таблицу rates пишется не чаще раза в минуту;
 // при недоступности API используется последний известный курс, а если его нет — зашитая оценка.
@@ -17,8 +20,22 @@ async function getJson(url) {
   return res.json();
 }
 
-// Каждая биржа возвращает { BTC, ETH } в долларах.
+const mid = (bid, ask) => (Number(bid) + Number(ask)) / 2;
+
+// [название, получение { BTC, ETH }, валюта цены]
 export const EXCHANGES = [
+  // Dzengi (ЗАО «Дзеньги», резидент ПВТ): открытый документированный API
+  ['Dzengi', async () => {
+    const [btc, eth] = await Promise.all(['BTC/BYN', 'ETH/BYN'].map((s) =>
+      getJson(`https://api-adapter.dzengi.com/api/v2/ticker/24hr?symbol=${encodeURIComponent(s)}`)));
+    return { BTC: mid(btc.bidPrice, btc.askPrice), ETH: mid(eth.bidPrice, eth.askPrice) };
+  }, 'BYN'],
+  // Bynex (резидент ПВТ): эндпоинт их страницы обмена, не документирован и может измениться
+  ['Bynex', async () => {
+    const [btc, eth] = await Promise.all(['BTC-BYN', 'ETH-BYN'].map((s) =>
+      getJson(`https://bynex.io/exchange/en/api/rate/${s}`)));
+    return { BTC: mid(btc.sell, btc.buy), ETH: mid(eth.sell, eth.buy) };
+  }, 'BYN'],
   ['Binance', async () => {
     const list = await getJson('https://api.binance.com/api/v3/ticker/price?symbols=%5B%22BTCUSDT%22,%22ETHUSDT%22%5D');
     const p = Object.fromEntries(list.map((t) => [t.symbol, Number(t.price)]));
@@ -46,10 +63,10 @@ export const EXCHANGES = [
 
 export async function fetchCrypto(exchanges = EXCHANGES) {
   const errors = [];
-  for (const [name, get] of exchanges) {
+  for (const [name, get, currency = 'USD'] of exchanges) {
     try {
       const p = await get();
-      if (p.BTC > 0 && p.ETH > 0) return { ...p, exchange: name };
+      if (p.BTC > 0 && p.ETH > 0) return { ...p, exchange: name, currency };
       errors.push(`${name}: unexpected payload`);
     } catch (err) {
       errors.push(`${name}: ${err.message}`);
@@ -73,8 +90,13 @@ async function fetchUsd() {
 }
 
 export async function fetchLive() {
-  const [p, usd] = await Promise.all([fetchCrypto(), fetchUsd()]);
-  return { BTC: round2(p.BTC * usd), ETH: round2(p.ETH * usd), usd, exchange: p.exchange };
+  const [crypto, usd] = await Promise.allSettled([fetchCrypto(), fetchUsd()]);
+  if (crypto.status === 'rejected') throw crypto.reason;
+  const p = crypto.value, base = { exchange: p.exchange, currency: p.currency };
+  // Рублёвой паре НБРБ не нужен, курс доллара — только для справки
+  if (p.currency === 'BYN') return { BTC: round2(p.BTC), ETH: round2(p.ETH), usd: usd.value ?? 0, ...base };
+  if (usd.status === 'rejected') throw usd.reason;
+  return { BTC: round2(p.BTC * usd.value), ETH: round2(p.ETH * usd.value), usd: usd.value, ...base };
 }
 
 const round2 = (n) => Math.round(n * 100) / 100;
@@ -105,7 +127,7 @@ export function createRates(db, { fetcher = fetchLive, now = () => Date.now() } 
     try {
       const r = await fetcher();
       const at = new Date(now()).toISOString();
-      last = { BTC: r.BTC, ETH: r.ETH, SAFE: 1, usd: r.usd, source: 'live', exchange: r.exchange, fetchedAt: at };
+      last = { BTC: r.BTC, ETH: r.ETH, SAFE: 1, usd: r.usd, source: 'live', exchange: r.exchange, currency: r.currency, fetchedAt: at };
       ticks.push({ t: at, BTC: r.BTC, ETH: r.ETH });
       if (ticks.length > TICKS_MAX) ticks.splice(0, ticks.length - TICKS_MAX);
       if (now() - persistedAt >= PERSIST_MS) {
