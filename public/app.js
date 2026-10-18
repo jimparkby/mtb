@@ -34,14 +34,17 @@ async function api(method, path, body) {
   const res = await fetch(API_BASE + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && token && !path.startsWith('/api/auth/')) {
+    const wasGuest = !S || S.user.guest;
     setToken(null);
-    toast('Сессия истекла', 'Войдите снова — пока показываем демо');
+    if (!wasGuest) toast('Сессия истекла', 'Войдите снова — пока показываем демо');
     setTimeout(() => reload(), 0);
   }
   if (!res.ok) throw new Error(data.error || `Ошибка сервера (${res.status})`);
   return data;
 }
 let CFG = { payments: null, broker: 'paper' };
+// Вход, карта и SMS банка скрыты: по QR открывается демо. Для аккаунта — ссылка с ?account
+const ACCOUNT_UI = new URLSearchParams(location.search).has('account');
 
 const fmt = (k) => (k / 100).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtInt = (k) => Math.round(k / 100).toLocaleString('ru-RU');
@@ -211,8 +214,10 @@ const PURCHASE_STATUS = { pending: 'Списываем сдачу', charged: 'С
 
 // Демо или свой аккаунт: что показывать на «Оплатить» и в «Настройках»
 function renderAccount() {
-  const { user, card } = S, real = !user.is_demo;
-  $('accountBtn').textContent = real ? user.name : 'Демо · Войти';
+  const { user, card } = S, real = !user.is_demo, showAccount = ACCOUNT_UI || real;
+  $('accountBtn').textContent = real ? user.name : showAccount ? 'Демо · Войти' : 'Демо';
+  $('accountBtn').disabled = !showAccount;
+  $('accountCard').hidden = !showAccount;
   $('emuCard').hidden = real;
   if (real) $('receiptCard').hidden = true;
   $('bankCard').hidden = !real;
@@ -440,8 +445,16 @@ document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => {
 const hash = location.hash.slice(1);
 if (hash === 'pay' || hash === 'set') $('tab-' + hash).click();
 
+// Каждый посетитель получает свою копию демо, чтобы зал по QR не мешал друг другу.
+// Если сервер не выдал гостя — показываем общее демо.
+async function ensureSession() {
+  if (token) return;
+  try { setToken((await api('POST', '/api/auth/guest')).token); } catch { /* общее демо без токена */ }
+}
+
 async function reload() {
   prev = null;
+  await ensureSession();
   $('smsLinkBox').hidden = true; // одноразовая ссылка не должна остаться видна другому аккаунту
   S = await api('GET', '/api/state');
   render();

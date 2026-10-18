@@ -10,7 +10,7 @@ export class HttpError extends Error {
 }
 
 const nowIso = () => new Date().toISOString();
-const USER_COLS = 'id, name, email, card_last4, is_demo, created_at';
+const USER_COLS = 'id, name, email, card_last4, is_demo, guest, created_at';
 const CARD_COLS = 'id, user_id, ref, provider, status, checkout_token, card_token, last4, brand, error, created_at, updated_at';
 const PURCHASE_COLS = 'id, user_id, asset, amount, rate, qty, rate_source, status, charge_ref, order_ref, error, created_at, updated_at';
 const PIGGY_SQL = 'SELECT COALESCE(SUM(roundup), 0) AS piggy FROM payments WHERE user_id = ? AND purchase_id IS NULL';
@@ -236,7 +236,7 @@ export function createStore(db) {
     const card = user.is_demo ? null : await latestCard(userId);
     const ingest = user.is_demo ? null : await db.get('SELECT created_at FROM ingest_tokens WHERE user_id = ?', [userId]);
     return {
-      user: { id: user.id, name: user.name, email: user.email, card_last4: user.card_last4, is_demo: !!user.is_demo },
+      user: { id: user.id, name: user.name, email: user.email, card_last4: user.card_last4, is_demo: !!user.is_demo, guest: !!user.guest },
       card: card ? { id: card.id, ref: card.ref, provider: card.provider, status: card.status, last4: card.last4, brand: card.brand, error: card.error } : null,
       sms: { connected: !!ingest, since: ingest?.created_at ?? null },
       settings,
@@ -258,17 +258,28 @@ export function createStore(db) {
 
   // ---------- демо ----------
 
-  const demoUserId = async () => (await db.get('SELECT id FROM users WHERE is_demo = 1 ORDER BY id LIMIT 1'))?.id;
+  // Общее демо (запросы без токена) — один пользователь; гости — свои копии того же сценария
+  const demoUserId = async () => (await db.get('SELECT id FROM users WHERE is_demo = 1 AND guest = 0 ORDER BY id LIMIT 1'))?.id;
 
-  // Демо-данные: три прошлые пакетные покупки и неделя покупок Ивана.
-  // Прошлые покупки считаются от текущего курса (на 2,4% ниже), чтобы доходность была правдоподобной.
-  async function seedDemo(rates = FALLBACK) {
-    const id = await db.tx(async (t) => {
-      await t.run('DELETE FROM users WHERE is_demo = 1');
-      const uid = await t.insert('INSERT INTO users (name, card_last4, is_demo, created_at) VALUES (?, ?, 1, ?)', ['Иван К.', '4821', nowIso()]);
+  async function createDemoUser({ guest }) {
+    return db.tx(async (t) => {
+      const uid = await t.insert('INSERT INTO users (name, card_last4, is_demo, guest, created_at) VALUES (?, ?, 1, ?, ?)',
+        ['Иван К.', '4821', guest ? 1 : 0, nowIso()]);
       await t.run('INSERT INTO settings (user_id) VALUES (?)', [uid]);
       await t.run('INSERT INTO goals (user_id, name, target) VALUES (?, ?, ?)', [uid, 'Ноутбук', 200000]);
       return uid;
+    });
+  }
+
+  // Демо-данные: три прошлые пакетные покупки и неделя покупок Ивана.
+  // Прошлые покупки считаются от текущего курса (на 2,4% ниже), чтобы доходность была правдоподобной.
+  async function fillDemo(id, rates = FALLBACK) {
+    await db.tx(async (t) => {
+      await t.run('DELETE FROM payments WHERE user_id = ?', [id]);
+      await t.run('DELETE FROM purchases WHERE user_id = ?', [id]);
+      await t.run('UPDATE settings SET round_step = 100, multiplier = 1, asset = ?, threshold = 2000 WHERE user_id = ?', ['BTC', id]);
+      await t.run(`INSERT INTO goals (user_id, name, target) VALUES (?, ?, ?)
+                   ON CONFLICT(user_id) DO UPDATE SET name = excluded.name, target = excluded.target`, [id, 'Ноутбук', 200000]);
     });
 
     const day = 86_400_000, start = Date.now() - 10 * day;
@@ -291,13 +302,24 @@ export function createStore(db) {
     return id;
   }
 
+  async function seedDemo(rates) {
+    return fillDemo((await demoUserId()) ?? await createDemoUser({ guest: false }), rates);
+  }
   const ensureDemo = async (rates) => (await demoUserId()) ?? seedDemo(rates);
+  const createGuest = async (rates) => fillDemo(await createDemoUser({ guest: true }), rates);
+
+  // Гости, у которых не осталось живой сессии, удаляются вместе с данными
+  async function cleanupGuests() {
+    const { changes } = await db.run(`DELETE FROM users WHERE guest = 1 AND id NOT IN
+                                      (SELECT user_id FROM sessions WHERE expires_at > ?)`, [nowIso()]);
+    return changes;
+  }
 
   return {
     getUser, createUser, findUserByEmail, createSession, userBySession, deleteSession,
     setIngestToken, deleteIngestToken, userByIngestToken,
     createCard, getCard, cardByRef, activeCard, latestCard, updateCard,
     addPayment, claimNow, getPurchase, purchasesByStatus, markPurchase, failPurchase,
-    updateSettings, updateGoal, getState, demoUserId, seedDemo, ensureDemo,
+    updateSettings, updateGoal, getState, demoUserId, seedDemo, ensureDemo, fillDemo, createGuest, cleanupGuests,
   };
 }

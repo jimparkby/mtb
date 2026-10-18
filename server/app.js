@@ -18,6 +18,7 @@ const MIME = {
 };
 const MAX_BODY = 16 * 1024;
 const WEBHOOK_SKEW_MS = 5 * 60_000;
+const GUEST_TTL_MS = 7 * 86_400_000;
 
 async function readRaw(req) {
   let size = 0; const chunks = [];
@@ -93,6 +94,8 @@ export async function createApp(db, {
   const limiter = createLimiter({ now });
   const signups = createLimiter({ limit: 20, windowMs: 60 * 60_000, now });
   const ingests = createLimiter({ limit: 30, windowMs: 60_000, now });
+  // На презентации весь зал может сидеть за одним Wi-Fi — лимит гостей с одного IP щедрый
+  const guests = createLimiter({ limit: 300, windowMs: 60 * 60_000, now });
   // За прокси Railway адрес соединения у всех один — берём клиента из X-Forwarded-For
   const clientIp = (req) => String(req.headers['x-forwarded-for'] ?? '').split(',')[0].trim() || req.socket.remoteAddress;
 
@@ -107,9 +110,9 @@ export async function createApp(db, {
   }
   const requireReal = (user) => { if (user.is_demo) throw new HttpError(403, 'Войдите в аккаунт'); };
 
-  async function startSession(userId) {
+  async function startSession(userId, ttl = SESSION_TTL_MS) {
     const token = newToken();
-    await store.createSession(userId, hashToken(token), SESSION_TTL_MS);
+    await store.createSession(userId, hashToken(token), ttl);
     return token;
   }
 
@@ -134,6 +137,14 @@ export async function createApp(db, {
       signups.fail(clientIp(req)); // считаем каждую регистрацию, не только неудачные
       const user = await store.createUser({ email: c.email, name: c.name, passwordHash: await hashPassword(c.password) });
       return { token: await startSession(user.id), user };
+    },
+
+    // Своя копия демо для посетителя по QR — без регистрации
+    'POST /api/auth/guest': async ({ req }) => {
+      guests.check(clientIp(req));
+      guests.fail(clientIp(req));
+      const id = await store.createGuest(await rates.current());
+      return { token: await startSession(id, GUEST_TTL_MS), user: await store.getUser(id) };
     },
 
     'POST /api/auth/login': async ({ req }) => {
@@ -195,8 +206,8 @@ export async function createApp(db, {
     'POST /api/reset': async ({ user }) => {
       if (!user.is_demo) throw new HttpError(403, 'Сбросить можно только демо');
       const r = await rates.current();
-      const id = await store.seedDemo(r);
-      return store.getState(id, r);
+      await store.fillDemo(user.id, r);
+      return store.getState(user.id, r);
     },
 
     // ---------- карта ----------
@@ -359,7 +370,7 @@ export async function createApp(db, {
     }
   });
 
-  return Object.assign(server, { purchaser, store });
+  return Object.assign(server, { purchaser, store, cleanupGuests: () => store.cleanupGuests() });
 }
 
 function findTrackingId(obj, depth = 0) {

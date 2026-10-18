@@ -90,6 +90,41 @@ for (const dialect of DIALECTS) {
       assert.equal(body.ticks.at(-1).BTC, 250000);
     });
 
+    test('every QR visitor gets an own demo copy without registration', async () => {
+      const g1 = (await call('POST', '/api/auth/guest')).body;
+      const g2 = (await call('POST', '/api/auth/guest')).body;
+      assert.ok(g1.token && g2.token);
+      const s1 = (await call('GET', '/api/state', null, g1.token)).body;
+      assert.equal(s1.user.is_demo, true);
+      assert.equal(s1.user.guest, true);
+      assert.equal(s1.user.name, 'Иван К.');
+      assert.ok(Math.abs(s1.totals.profitPct - 2.4) < 0.1);
+      const shared = (await call('GET', '/api/state')).body;
+
+      const pay = await call('POST', '/api/payments', { merchant: 'Кофе', amount: '6,40' }, g1.token);
+      assert.equal(pay.status, 200);
+      assert.equal(pay.body.state.piggy, s1.piggy + 60);
+      assert.equal((await call('GET', '/api/state', null, g2.token)).body.piggy, s1.piggy, 'other guest untouched');
+      assert.equal((await call('GET', '/api/state')).body.piggy, shared.piggy, 'shared demo untouched');
+
+      // сброс возвращает к исходной неделе только этого гостя
+      await call('POST', '/api/payments', { amount: '1,10' }, g2.token);
+      const reset = await call('POST', '/api/reset', null, g1.token);
+      assert.equal(reset.body.user.id, s1.user.id);
+      assert.equal(reset.body.piggy, s1.piggy);
+      assert.equal((await call('GET', '/api/state', null, g2.token)).body.piggy, s1.piggy + 90);
+
+      // гостю недоступно то, что требует аккаунта
+      assert.equal((await call('POST', '/api/cards', null, g1.token)).status, 403);
+      assert.equal((await call('POST', '/api/sms-link', null, g1.token)).status, 403);
+
+      // гость без живой сессии удаляется, остальные остаются
+      await call('POST', '/api/auth/logout', null, g1.token);
+      assert.equal(await server.cleanupGuests(), 1);
+      assert.equal((await call('GET', '/api/state', null, g2.token)).status, 200);
+      assert.equal((await call('GET', '/api/state')).status, 200);
+    });
+
     test('static files are served and traversal is blocked', async () => {
       const res = await fetch(server.address() && `http://127.0.0.1:${server.address().port}/`);
       assert.equal(res.status, 200);

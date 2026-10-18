@@ -29,6 +29,7 @@ body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset
 .brand{display:flex;align-items:center;gap:10px}
 .brand img{width:36px;height:36px;border-radius:10px}
 .brand b{font-size:22px;font-weight:800;letter-spacing:-.5px}
+.brand .demo:disabled{cursor:default;opacity:1}
 .brand .demo{margin-left:auto;font:inherit;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--blue);border:1px solid var(--line);border-radius:999px;padding:6px 12px;background:var(--surface);cursor:pointer;max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tabs{display:grid;grid-template-columns:repeat(3,1fr);background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:4px;gap:4px}
 .tabs button{font:inherit;font-weight:700;font-size:14px;border:0;border-radius:10px;padding:10px 4px;background:transparent;color:var(--ink-2);cursor:pointer}

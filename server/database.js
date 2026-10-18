@@ -124,6 +124,11 @@ CREATE TABLE ingest_tokens (
   created_at  TEXT NOT NULL
 );
 `,
+  // Гости: у каждого посетителя демо своя копия данных Ивана, без регистрации
+  `
+ALTER TABLE users ADD COLUMN guest INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX users_guest ON users(guest);
+`,
 ];
 
 async function migrate(db) {

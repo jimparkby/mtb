@@ -297,7 +297,7 @@ test('an existing SQLite database from the demo version is migrated in place', a
   await db.close();
   // повторное открытие не применяет миграции заново
   const again = await openDatabase(path);
-  assert.equal((await again.all('SELECT version FROM schema_migrations')).length, 3);
+  assert.equal((await again.all('SELECT version FROM schema_migrations')).length, 4);
   await again.close();
   rmSync(dir, { recursive: true, force: true });
 });

@@ -31,6 +31,8 @@ console.log(`Платежи: ${payments ? payments.name + (payments.test ? ' (т
 
 // Сверка покупок: докупить списанное, пометить зависшее
 setInterval(() => app.purchaser.reconcile().catch((err) => console.error('[reconcile]', err)), 60_000).unref();
+// Сессия гостя живёт неделю; после неё гость и его данные удаляются
+setInterval(() => app.cleanupGuests().catch((err) => console.error('[guests]', err)), 60 * 60_000).unref();
 
 app.listen(port, () => {
   console.log(`KOPI запущен: http://localhost:${port}`);
