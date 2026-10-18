@@ -1,19 +1,37 @@
 import { join } from 'node:path';
-import { openDb } from './db.js';
+import { openDatabase } from './database.js';
 import { createApp } from './app.js';
 import { createRates } from './rates.js';
+import { paymentsFromEnv } from './payments.js';
+import { brokerFromEnv } from './broker.js';
 
-const port = Number(process.env.PORT) || 3000;
-// На Railway база лежит на подключённом volume, иначе пропадёт при каждом деплое.
-const dbPath = process.env.DB_PATH
-  || (process.env.RAILWAY_VOLUME_MOUNT_PATH && join(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'kopi.db'))
+const env = process.env;
+const port = Number(env.PORT) || 3000;
+// PostgreSQL, если задан DATABASE_URL (Railway Postgres). Иначе SQLite: на Railway —
+// на подключённом volume, иначе база пропадёт при каждом деплое.
+const target = env.DATABASE_URL
+  || env.DB_PATH
+  || (env.RAILWAY_VOLUME_MOUNT_PATH && join(env.RAILWAY_VOLUME_MOUNT_PATH, 'kopi.db'))
   || 'data/kopi.db';
-const db = openDb(dbPath);
-console.log(`База: ${dbPath}`);
+const db = await openDatabase(target, { ssl: env.PGSSL === 'true' ? { rejectUnauthorized: false } : undefined });
+console.log(`База: ${db.dialect}${db.dialect === 'sqlite' ? ' ' + target : ''}`);
 
-const rates = createRates(db);
+const rates = await createRates(db);
 await rates.start(); // первый курс до создания демо-данных, чтобы они считались от реального курса
 
-createApp(db, { rates }).listen(port, () => {
+const payments = paymentsFromEnv(env);
+const broker = brokerFromEnv(env);
+const app = await createApp(db, {
+  rates, payments, broker,
+  bankWebhookSecret: env.BANK_WEBHOOK_SECRET || null,
+  publicUrl: env.PUBLIC_URL || (env.RAILWAY_PUBLIC_DOMAIN && `https://${env.RAILWAY_PUBLIC_DOMAIN}`) || null,
+});
+console.log(`Платежи: ${payments ? payments.name + (payments.test ? ' (тест)' : '') : 'не подключены'}; брокер: ${broker.name}; ` +
+  `вебхук банка: ${env.BANK_WEBHOOK_SECRET ? 'включён' : 'выключен'}`);
+
+// Сверка покупок: докупить списанное, пометить зависшее
+setInterval(() => app.purchaser.reconcile().catch((err) => console.error('[reconcile]', err)), 60_000).unref();
+
+app.listen(port, () => {
   console.log(`KOPI запущен: http://localhost:${port}`);
 });

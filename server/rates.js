@@ -101,27 +101,22 @@ export async function fetchLive() {
 
 const round2 = (n) => Math.round(n * 100) / 100;
 
-export function createRates(db, { fetcher = fetchLive, now = () => Date.now() } = {}) {
-  const insert = db.prepare(
-    'INSERT INTO rates (btc, eth, usd_byn, source, fetched_at) VALUES (?, ?, ?, ?, ?)');
-  const latest = db.prepare('SELECT * FROM rates ORDER BY id DESC LIMIT 1');
-  const since = db.prepare('SELECT btc, eth, fetched_at FROM rates WHERE fetched_at >= ? ORDER BY id');
+// Асинхронная фабрика: при старте поднимает из БД последний курс и тики за час.
+export async function createRates(db, { fetcher = fetchLive, now = () => Date.now() } = {}) {
   let pending = null, last = null, persistedAt = 0, failedAt = -Infinity, timer = null;
 
+  const row = await db.get('SELECT btc, eth, usd_byn, source, fetched_at FROM rates ORDER BY id DESC LIMIT 1');
+  // Сохранённый курс — до первого успешного запроса; без него — зашитая оценка
+  const saved = row
+    ? { BTC: row.btc, ETH: row.eth, SAFE: 1, usd: row.usd_byn, source: row.source, fetchedAt: row.fetched_at }
+    : { ...FALLBACK, SAFE: 1, source: 'fallback', fetchedAt: null };
+
   // График после рестарта начинается с поминутных записей из БД
-  const ticks = since.all(new Date(now() - TICKS_MAX * TTL_MS).toISOString())
+  const ticks = (await db.all('SELECT btc, eth, fetched_at FROM rates WHERE fetched_at >= ? ORDER BY id',
+    [new Date(now() - TICKS_MAX * TTL_MS).toISOString()]))
     .map((r) => ({ t: r.fetched_at, BTC: r.btc, ETH: r.eth }));
 
-  function fromRow(row) {
-    return { BTC: row.btc, ETH: row.eth, SAFE: 1, usd: row.usd_byn, source: row.source, fetchedAt: row.fetched_at };
-  }
-
-  function cached() {
-    if (last) return last;
-    const row = latest.get();
-    if (row) return fromRow(row);
-    return { ...FALLBACK, SAFE: 1, source: 'fallback', fetchedAt: null };
-  }
+  const cached = () => last ?? saved;
 
   async function refresh() {
     try {
@@ -131,8 +126,9 @@ export function createRates(db, { fetcher = fetchLive, now = () => Date.now() } 
       ticks.push({ t: at, BTC: r.BTC, ETH: r.ETH });
       if (ticks.length > TICKS_MAX) ticks.splice(0, ticks.length - TICKS_MAX);
       if (now() - persistedAt >= PERSIST_MS) {
-        insert.run(r.BTC, r.ETH, r.usd, 'live', at);
         persistedAt = now();
+        await db.run('INSERT INTO rates (btc, eth, usd_byn, source, fetched_at) VALUES (?, ?, ?, ?, ?)', [r.BTC, r.ETH, r.usd, 'live', at])
+          .catch((err) => console.warn('[rates] could not persist rate:', err.message));
       }
       return last;
     } catch (err) {

@@ -16,13 +16,31 @@
 <div class="toasts" id="toasts" aria-live="polite"></div>
 <div class="app">
   <header class="top">
-    <div class="brand"><img src="logo.png" alt=""><b>KOPI</b><span class="demo">Демо</span></div>
+    <div class="brand"><img src="logo.png" alt=""><b>KOPI</b><button class="demo" id="accountBtn" type="button">Демо · Войти</button></div>
     <nav class="tabs" role="tablist">
       <button role="tab" id="tab-home" aria-selected="true" data-tab="home">Копилка</button>
       <button role="tab" id="tab-pay" aria-selected="false" data-tab="pay">Оплатить</button>
       <button role="tab" id="tab-set" aria-selected="false" data-tab="set">Настройки</button>
     </nav>
   </header>
+
+  <!-- AUTH -->
+  <section class="screen" id="auth" hidden>
+    <div class="card">
+      <div class="seg" role="tablist">
+        <button type="button" role="tab" id="authLoginTab" aria-selected="true">Вход</button>
+        <button type="button" role="tab" id="authRegTab" aria-selected="false">Регистрация</button>
+      </div>
+      <form id="authForm" class="form" novalidate>
+        <div class="field" id="nameField" hidden><label class="note" for="authName">Имя</label><input id="authName" autocomplete="name" maxlength="40"></div>
+        <div class="field"><label class="note" for="authEmail">Email</label><input id="authEmail" type="email" autocomplete="email" inputmode="email"></div>
+        <div class="field"><label class="note" for="authPassword">Пароль</label><input id="authPassword" type="password" autocomplete="current-password" minlength="8"></div>
+        <button class="btn" id="authSubmit" type="submit">Войти</button>
+        <span class="note err" id="authError" role="alert"></span>
+      </form>
+    </div>
+    <button class="btn secondary" id="authBack" type="button">Вернуться к демо</button>
+  </section>
 
   <!-- HOME -->
   <section class="screen" id="home">
@@ -67,7 +85,15 @@
       <div class="row"><span class="meta" id="cardHolder"></span><span class="meta" id="cardRule"></span></div>
     </div>
 
-    <div class="card">
+    <div class="card" id="bankCard" hidden>
+      <div class="row"><span class="label">Карта для округлений</span><span class="pill" id="cardStatus"></span></div>
+      <span class="note" id="cardText"></span>
+      <button class="btn" id="bindCard" type="button">Привязать карту</button>
+      <button class="btn secondary" id="unbindCard" type="button" hidden>Отвязать карту</button>
+      <details class="note" id="cardRefBox" hidden><summary>Идентификатор карты для банка</summary><code id="cardRef"></code></details>
+    </div>
+
+    <div class="card" id="emuCard">
       <span class="label">Эмулятор кассы</span>
       <label class="amount" for="amountInput"><input id="amountInput" inputmode="decimal" autocomplete="off" value="6,40" aria-label="Сумма покупки, BYN"><span>BYN</span></label>
       <div class="chips" id="presets"></div>
@@ -104,6 +130,11 @@
         <div class="field"><label class="note" for="goalNameInput">Название</label><input id="goalNameInput" maxlength="24"></div>
         <div class="field"><label class="note" for="goalAmountInput">Сумма, BYN</label><input id="goalAmountInput" inputmode="numeric"></div>
       </div>
+    </div>
+    <div class="card" id="accountCard">
+      <span class="label">Аккаунт</span>
+      <span class="note" id="accountText"></span>
+      <button class="btn secondary" id="accountAction" type="button"></button>
     </div>
     <div class="card">
       <span class="note" id="rateNote">Демо: оплаты эмулируются, деньги не списываются. Курс загружается…</span>

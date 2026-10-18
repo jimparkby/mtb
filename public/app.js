@@ -19,16 +19,29 @@ const API_BASE = await (async () => {
   return PROD_API;
 })();
 
+// Сессия аккаунта. Без токена сервер отвечает данными демо-пользователя.
+const TOKEN_KEY = 'kopi.token';
+let token = (() => { try { return localStorage.getItem(TOKEN_KEY); } catch { return null; } })();
+function setToken(t) {
+  token = t;
+  try { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); } catch { /* приватный режим */ }
+}
+
 async function api(method, path, body) {
-  const res = await fetch(API_BASE + path, {
-    method,
-    headers: body ? { 'content-type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const headers = {};
+  if (body) headers['content-type'] = 'application/json';
+  if (token) headers.authorization = 'Bearer ' + token;
+  const res = await fetch(API_BASE + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && token && !path.startsWith('/api/auth/')) {
+    setToken(null);
+    toast('Сессия истекла', 'Войдите снова — пока показываем демо');
+    setTimeout(() => reload(), 0);
+  }
   if (!res.ok) throw new Error(data.error || `Ошибка сервера (${res.status})`);
   return data;
 }
+let CFG = { payments: null, broker: 'paper' };
 
 const fmt = (k) => (k / 100).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtInt = (k) => Math.round(k / 100).toLocaleString('ru-RU');
@@ -51,6 +64,8 @@ function toast(title, text) {
   setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 300); }, 3600);
 }
 function toastPurchase(p) {
+  if (p.status === 'failed') return toast('Покупка не прошла', (p.error || 'Списание отклонено') + '. Сдача осталась в копилке');
+  if (p.status !== 'filled') return toast('Покупка в обработке', 'Сдача ' + fmt(p.amount) + ' BYN списана, покупаем ' + p.asset);
   toast('Куплено ' + (p.asset === 'SAFE' ? 'в консервативный' : p.asset) + ' на ' + fmt(p.amount) + ' BYN',
     p.asset === 'SAFE' ? 'Деньги работают на цель'
       : fmtQty(p.qty, p.asset) + ' ' + p.asset + ' по курсу ' + Math.round(p.rate).toLocaleString('ru-RU') + ' BYN');
@@ -78,12 +93,12 @@ function renderSpark() {
   const crypto = S.holdings.filter((h) => h.asset !== 'SAFE' && h.qty > 0);
   const pts = ticks.map((t) => fixed + crypto.reduce((s, h) => s + Math.round(h.qty * t[h.asset] * 100), 0));
   if (pts.length < 2 || !crypto.length) {
-    svg.hidden = true;
+    svg.toggleAttribute('hidden', true); // у SVG нет свойства hidden, только атрибут
     $('sparkFrom').textContent = crypto.length ? 'График появится через пару обновлений курса' : '';
     $('sparkDelta').textContent = '';
     return;
   }
-  svg.hidden = false;
+  svg.toggleAttribute('hidden', false);
   const min = Math.min(...pts), max = Math.max(...pts), span = max - min || 1;
   const W = 300, H = 64, pad = 4;
   const xy = pts.map((v, i) => [i / (pts.length - 1) * W, pad + (1 - (v - min) / span) * (H - 2 * pad)]);
@@ -153,24 +168,31 @@ function render() {
     const r = document.createElement('div'); r.className = 'h';
     if (h.type === 'round') {
       r.innerHTML = '<div class="ic">↑</div><div class="t"><div></div><div class="s num"></div></div><div class="v num"></div>';
-      r.querySelector('.t div').textContent = h.merchant;
+      r.querySelector('.t div').textContent = h.merchant + (h.source === 'bank' ? ' · карта' : '');
       r.querySelector('.s').textContent = fmt(h.amount) + ' → ' + fmt(h.rounded) + ' BYN · ' + fmtWhen(h.created_at);
       r.querySelector('.v').textContent = '+' + fmt(h.roundup);
     } else {
       r.innerHTML = '<div class="ic buy"></div><div class="t"><div></div><div class="s num"></div></div><div class="v num" style="color:var(--blue)"></div>';
       r.querySelector('.ic').textContent = h.asset === 'BTC' ? '₿' : (h.asset === 'ETH' ? 'Ξ' : 'Br');
       r.querySelector('.t div').textContent = 'Покупка ' + (h.asset === 'SAFE' ? 'консервативного' : h.asset);
-      r.querySelector('.s').textContent = (h.asset === 'SAFE' ? 'пакетом' : fmtQty(h.qty, h.asset) + ' ' + h.asset) + ' · ' + fmtWhen(h.created_at);
+      const st = PURCHASE_STATUS[h.status];
+      r.querySelector('.s').textContent = (st ? st + (h.error && h.status !== 'charged' ? ': ' + h.error : '')
+        : h.asset === 'SAFE' ? 'пакетом' : fmtQty(h.qty, h.asset) + ' ' + h.asset) + ' · ' + fmtWhen(h.created_at);
       r.querySelector('.v').textContent = fmt(h.amount) + ' BYN';
+      if (st) { r.querySelector('.v').style.color = ''; r.querySelector('.v').classList.add(h.status === 'failed' ? 'fail' : 'wait'); }
     }
     hl.appendChild(r);
   });
   $('histCount').textContent = stats.roundups + ' округлений';
 
-  $('cardPan').textContent = '•••• •••• •••• ' + user.card_last4;
+  $('cardPan').textContent = user.card_last4 ? '•••• •••• •••• ' + user.card_last4 : 'Карта не привязана';
   $('cardHolder').textContent = user.name;
   $('cardRule').textContent = 'Округление до ' + fmtInt(settings.round_step) + ' BYN' + (settings.multiplier > 1 ? ' ×' + settings.multiplier : '');
-  $('rateNote').textContent = 'Демо: оплаты эмулируются, деньги не списываются. ' + (rates.source === 'live'
+  renderAccount();
+  $('rateNote').textContent = (user.is_demo ? 'Демо: оплаты эмулируются, деньги не списываются. '
+    : 'Оплаты приходят от банка по привязанной карте. ' + (CFG.payments?.test ? 'Платёжный провайдер в тестовом режиме — реальные деньги не списываются. ' : '')
+      + (CFG.broker === 'paper' ? 'Покупка учебная: записывается по реальному курсу площадки, ордер на биржу уйдёт после подключения криптоплатформы. ' : ''))
+    + (rates.source === 'live'
     ? 'Курс реальный: ' + (rates.currency === 'BYN'
         ? 'BTC/BYN и ETH/BYN на ' + rates.exchange + ' (резидент ПВТ), середина между покупкой и продажей'
         : 'спот ' + (rates.exchange || 'биржи') + ' × официальный курс НБРБ (' + rates.usd.toLocaleString('ru-RU') + ' BYN за $1)')
@@ -183,6 +205,38 @@ function render() {
     qty: Object.fromEntries(holdings.map((h) => [h.asset, h.qty])),
     values: Object.fromEntries(holdings.map((h) => [h.asset, h.value])),
   };
+}
+
+const PURCHASE_STATUS = { pending: 'Списываем сдачу', charged: 'Сдача списана, покупаем', failed: 'Не прошла', review: 'На проверке' };
+
+// Демо или свой аккаунт: что показывать на «Оплатить» и в «Настройках»
+function renderAccount() {
+  const { user, card } = S, real = !user.is_demo;
+  $('accountBtn').textContent = real ? user.name : 'Демо · Войти';
+  $('emuCard').hidden = real;
+  if (real) $('receiptCard').hidden = true;
+  $('bankCard').hidden = !real;
+  $('resetBtn').hidden = real;
+  $('accountText').textContent = real
+    ? 'Вы вошли как ' + user.email + '.'
+    : 'Сейчас открыто демо с данными Ивана. Создайте аккаунт, чтобы привязать свою карту и копить со своих покупок.';
+  $('accountAction').textContent = real ? 'Выйти' : 'Войти или создать аккаунт';
+  if (!real) return;
+
+  const st = $('cardStatus'), text = $('cardText'), bind = $('bindCard');
+  const status = card?.status;
+  st.className = 'pill' + (status === 'active' ? ' ok' : status === 'failed' ? ' bad' : '');
+  st.textContent = { active: 'Привязана', pending: 'Ожидает', failed: 'Ошибка' }[status] ?? 'Нет карты';
+  text.textContent = !CFG.payments ? 'Привязка карт появится после подключения платёжного провайдера.'
+    : status === 'active' ? (card.brand ? card.brand.toUpperCase() + ' ' : '') + '•••• ' + card.last4 + '. Каждая оплата этой картой округляется, сдача списывается с неё пакетом.'
+    : status === 'pending' ? 'Завершите привязку на странице платёжного провайдера.'
+    : status === 'failed' ? 'Не удалось привязать: ' + (card.error || 'ошибка провайдера') + '. Попробуйте ещё раз.'
+    : 'Номер карты вводится на защищённой странице платёжного провайдера — KOPI его не видит и не хранит.';
+  bind.hidden = status === 'active' || !CFG.payments;
+  bind.textContent = status === 'pending' ? 'Продолжить привязку' : 'Привязать карту';
+  $('unbindCard').hidden = status !== 'active';
+  $('cardRefBox').hidden = status !== 'active';
+  $('cardRef').textContent = card?.ref ?? '';
 }
 
 async function patchSettings(patch) {
@@ -287,6 +341,67 @@ $('resetBtn').onclick = async (e) => {
   catch (err) { toast('Не удалось сбросить', err.message); }
 };
 
+// Карта
+$('bindCard').onclick = async () => {
+  const btn = $('bindCard'); btn.disabled = true;
+  try {
+    const r = await api('POST', '/api/cards');
+    if (r.redirectUrl) { location.href = r.redirectUrl; return; }
+    S = r.state; render();
+    if (S.card?.status === 'active') toast('Карта привязана', '•••• ' + S.card.last4 + ' — теперь сдача с каждой оплаты идёт в копилку');
+  } catch (e) { toast('Карта не привязана', e.message); }
+  finally { btn.disabled = false; }
+};
+$('unbindCard').onclick = async () => {
+  try { S = await api('DELETE', '/api/cards/' + S.card.id); render(); toast('Карта отвязана', 'Новые оплаты не будут округляться'); }
+  catch (e) { toast('Не удалось отвязать', e.message); }
+};
+
+// Вход и регистрация
+let authMode = 'login';
+function setAuthMode(mode) {
+  authMode = mode;
+  $('authLoginTab').setAttribute('aria-selected', String(mode === 'login'));
+  $('authRegTab').setAttribute('aria-selected', String(mode === 'register'));
+  $('nameField').hidden = mode !== 'register';
+  $('authPassword').autocomplete = mode === 'register' ? 'new-password' : 'current-password';
+  $('authSubmit').textContent = mode === 'register' ? 'Создать аккаунт' : 'Войти';
+  $('authError').textContent = '';
+}
+function showAuth(on) {
+  $('auth').hidden = !on;
+  document.querySelector('.tabs').hidden = on;
+  if (on) { ['home', 'pay', 'set'].forEach((id) => $(id).hidden = true); $('authEmail').focus(); }
+  else $('tab-home').click();
+}
+$('authLoginTab').onclick = () => setAuthMode('login');
+$('authRegTab').onclick = () => setAuthMode('register');
+$('authBack').onclick = () => showAuth(false);
+$('authForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const btn = $('authSubmit'); btn.disabled = true; $('authError').textContent = '';
+  try {
+    const body = { email: $('authEmail').value, password: $('authPassword').value };
+    if (authMode === 'register') body.name = $('authName').value;
+    const r = await api('POST', '/api/auth/' + authMode, body);
+    setToken(r.token);
+    $('authPassword').value = '';
+    await reload();
+    showAuth(false);
+    toast(authMode === 'register' ? 'Аккаунт создан' : 'С возвращением', authMode === 'register' ? 'Привяжите карту на вкладке «Оплатить»' : r.user.email);
+  } catch (err) { $('authError').textContent = err.message; }
+  finally { btn.disabled = false; }
+};
+$('accountBtn').onclick = () => S && !S.user.is_demo ? $('tab-set').click() : (setAuthMode('login'), showAuth(true));
+$('accountAction').onclick = async () => {
+  if (S.user.is_demo) { setAuthMode('register'); return showAuth(true); }
+  await api('POST', '/api/auth/logout').catch(() => {});
+  setToken(null);
+  await reload();
+  $('tab-home').click();
+  toast('Вы вышли', 'Снова открыто демо');
+};
+
 // Вкладки
 document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => {
   document.querySelectorAll('.tabs button').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
@@ -296,9 +411,28 @@ document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => {
 const hash = location.hash.slice(1);
 if (hash === 'pay' || hash === 'set') $('tab-' + hash).click();
 
+async function reload() {
+  prev = null;
+  S = await api('GET', '/api/state');
+  render();
+}
+
 try {
-  const [state, t] = await Promise.all([api('GET', '/api/state'), api('GET', '/api/ticks').catch(() => ({ ticks: [] }))]);
-  ticks = t.ticks ?? []; S = state; render();
+  const [cfg, t] = await Promise.all([
+    api('GET', '/api/config').catch(() => CFG),
+    api('GET', '/api/ticks').catch(() => ({ ticks: [] })),
+  ]);
+  CFG = cfg; ticks = t.ticks ?? [];
+  await reload();
+  // Вернулись со страницы платёжного провайдера после привязки карты
+  const cardId = new URLSearchParams(location.search).get('card');
+  if (cardId && !S.user.is_demo) {
+    history.replaceState(null, '', location.pathname + location.hash);
+    S = await api('POST', '/api/cards/' + encodeURIComponent(cardId) + '/refresh');
+    render();
+    toast(S.card?.status === 'active' ? 'Карта привязана' : 'Привязка не завершена',
+      S.card?.status === 'active' ? '•••• ' + S.card.last4 : 'Статус: ' + ($('cardStatus').textContent || 'неизвестен'));
+  }
 }
 catch (e) { toast('Сервер недоступен', e.message); }
 
