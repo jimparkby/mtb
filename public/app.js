@@ -168,7 +168,7 @@ function render() {
     const r = document.createElement('div'); r.className = 'h';
     if (h.type === 'round') {
       r.innerHTML = '<div class="ic">↑</div><div class="t"><div></div><div class="s num"></div></div><div class="v num"></div>';
-      r.querySelector('.t div').textContent = h.merchant + (h.source === 'bank' ? ' · карта' : '');
+      r.querySelector('.t div').textContent = h.merchant + ({ bank: ' · карта', sms: ' · SMS банка' }[h.source] ?? '');
       r.querySelector('.s').textContent = fmt(h.amount) + ' → ' + fmt(h.rounded) + ' BYN · ' + fmtWhen(h.created_at);
       r.querySelector('.v').textContent = '+' + fmt(h.roundup);
     } else {
@@ -216,6 +216,7 @@ function renderAccount() {
   $('emuCard').hidden = real;
   if (real) $('receiptCard').hidden = true;
   $('bankCard').hidden = !real;
+  $('smsCard').hidden = !real;
   $('resetBtn').hidden = real;
   $('accountText').textContent = real
     ? 'Вы вошли как ' + user.email + '.'
@@ -237,6 +238,16 @@ function renderAccount() {
   $('unbindCard').hidden = status !== 'active';
   $('cardRefBox').hidden = status !== 'active';
   $('cardRef').textContent = card?.ref ?? '';
+
+  const on = S.sms?.connected;
+  $('smsStatus').className = 'pill' + (on ? ' ok' : '');
+  $('smsStatus').textContent = on ? 'Подключены' : 'Выключены';
+  $('smsText').textContent = (on
+    ? 'Телефон пересылает уведомления банка об оплатах — каждая покупка вашей картой округляется автоматически.'
+    : 'Подключите пересылку SMS или push от вашего банка: каждая оплата вашей настоящей картой будет округляться, сдача — копиться здесь.')
+    + (status === 'active' ? '' : ' Чтобы сдача покупала актив, привяжите карту для списаний выше.');
+  $('smsConnect').textContent = on ? 'Выдать новую ссылку' : 'Подключить уведомления';
+  $('smsOff').hidden = !on;
 }
 
 async function patchSettings(patch) {
@@ -357,6 +368,24 @@ $('unbindCard').onclick = async () => {
   catch (e) { toast('Не удалось отвязать', e.message); }
 };
 
+// Пересылка уведомлений банка
+$('smsConnect').onclick = async () => {
+  try {
+    const r = await api('POST', '/api/sms-link');
+    S = r.state; render();
+    $('smsUrl').textContent = r.url;
+    $('smsLinkBox').hidden = false;
+  } catch (e) { toast('Не удалось подключить', e.message); }
+};
+$('smsCopy').onclick = async () => {
+  try { await navigator.clipboard.writeText($('smsUrl').textContent); toast('Ссылка скопирована', 'Вставьте её в автоматизацию на телефоне'); }
+  catch { toast('Не удалось скопировать', 'Выделите ссылку и скопируйте вручную'); }
+};
+$('smsOff').onclick = async () => {
+  try { S = await api('DELETE', '/api/sms-link'); $('smsLinkBox').hidden = true; render(); toast('Уведомления отключены', 'Ссылка больше не работает'); }
+  catch (e) { toast('Не удалось отключить', e.message); }
+};
+
 // Вход и регистрация
 let authMode = 'login';
 function setAuthMode(mode) {
@@ -413,6 +442,7 @@ if (hash === 'pay' || hash === 'set') $('tab-' + hash).click();
 
 async function reload() {
   prev = null;
+  $('smsLinkBox').hidden = true; // одноразовая ссылка не должна остаться видна другому аккаунту
   S = await api('GET', '/api/state');
   render();
 }

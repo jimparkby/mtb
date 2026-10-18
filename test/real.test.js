@@ -221,6 +221,36 @@ for (const dialect of DIALECTS) {
       assert.equal(s.totals.invested, 900);
     });
 
+    test('bank SMS forwarded from the phone become round-ups', async () => {
+      const u = await withCard();
+      assert.equal((await call('POST', '/api/sms-link')).status, 403, 'demo has no link');
+      const link = await call('POST', '/api/sms-link', null, u.token);
+      assert.equal(link.body.state.sms.connected, true);
+      const url = new URL(link.body.url);
+      const send = (body, type = 'text/plain') => fetch(base + url.pathname, { method: 'POST', headers: { 'content-type': type }, body })
+        .then(async (r) => ({ status: r.status, body: await r.json() }));
+
+      const sms = 'Priorbank. Karta 4***1234. 18-10-2026 12:34:56. Oplata 6.40 BYN. BLR KOFEINYA ZERNO. Dostupno: 123.45 BYN.';
+      const r1 = await send(sms);
+      assert.equal(r1.status, 200);
+      assert.deepEqual([r1.body.amount, r1.body.roundup, r1.body.merchant], [640, 60, 'BLR KOFEINYA ZERNO']);
+      assert.equal((await send(sms)).body.duplicate, true);
+      const r2 = await send(JSON.stringify({ text: 'Карта 1234: Покупка 47.30 BYN, ЕВРООПТ, Минск. Остаток 523.10 BYN' }), 'application/json');
+      assert.equal(r2.body.roundup, 70);
+      assert.equal((await send('Zachislenie 500.00 BYN')).body.ignored, 'not a purchase');
+      assert.equal((await send('Oplata 12.99 USD NETFLIX')).body.ignored, 'currency USD');
+
+      const s = (await call('GET', '/api/state', null, u.token)).body;
+      assert.equal(s.piggy, 130);
+      assert.deepEqual(s.history.filter((h) => h.source === 'sms').map((h) => h.merchant), ['ЕВРООПТ', 'BLR KOFEINYA ZERNO']);
+
+      // новая ссылка отключает старую
+      await call('POST', '/api/sms-link', null, u.token);
+      assert.equal((await send(sms.replace('6.40', '7.40'))).status, 404);
+      const off = await call('DELETE', '/api/sms-link', null, u.token);
+      assert.equal(off.body.sms.connected, false);
+    });
+
     test('users only see their own data', async () => {
       const a = await withCard(), b = await register();
       await bank({ id: 'tx-iso', card_ref: a.card.ref, amount: 640, merchant: 'Секрет' });
@@ -267,7 +297,7 @@ test('an existing SQLite database from the demo version is migrated in place', a
   await db.close();
   // повторное открытие не применяет миграции заново
   const again = await openDatabase(path);
-  assert.equal((await again.all('SELECT version FROM schema_migrations')).length, 2);
+  assert.equal((await again.all('SELECT version FROM schema_migrations')).length, 3);
   await again.close();
   rmSync(dir, { recursive: true, force: true });
 });

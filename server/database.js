@@ -116,6 +116,14 @@ ALTER TABLE purchases ADD COLUMN error TEXT;
 ALTER TABLE purchases ADD COLUMN updated_at TEXT;
 CREATE INDEX purchases_status ON purchases(status);
 `,
+  // Личная ссылка для пересылки SMS/push банка: в БД — только хэш токена
+  `
+CREATE TABLE ingest_tokens (
+  token_hash  TEXT PRIMARY KEY,
+  user_id     INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  created_at  TEXT NOT NULL
+);
+`,
 ];
 
 async function migrate(db) {

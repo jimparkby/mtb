@@ -51,6 +51,20 @@ export function createStore(db) {
   }
   const deleteSession = (tokenHash) => db.run('DELETE FROM sessions WHERE token_hash = ?', [tokenHash]);
 
+  // ---------- пересылка уведомлений банка ----------
+
+  async function setIngestToken(userId, tokenHash) {
+    await db.tx(async (t) => {
+      await t.run('DELETE FROM ingest_tokens WHERE user_id = ?', [userId]);
+      await t.run('INSERT INTO ingest_tokens (token_hash, user_id, created_at) VALUES (?, ?, ?)', [tokenHash, userId, nowIso()]);
+    });
+  }
+  const deleteIngestToken = (userId) => db.run('DELETE FROM ingest_tokens WHERE user_id = ?', [userId]);
+  async function userByIngestToken(tokenHash) {
+    const row = await db.get('SELECT user_id FROM ingest_tokens WHERE token_hash = ?', [tokenHash]);
+    return row && getUser(row.user_id);
+  }
+
   // ---------- карты ----------
 
   async function createCard(userId, provider) {
@@ -220,9 +234,11 @@ export function createStore(db) {
      .slice(0, historyLimit);
 
     const card = user.is_demo ? null : await latestCard(userId);
+    const ingest = user.is_demo ? null : await db.get('SELECT created_at FROM ingest_tokens WHERE user_id = ?', [userId]);
     return {
       user: { id: user.id, name: user.name, email: user.email, card_last4: user.card_last4, is_demo: !!user.is_demo },
       card: card ? { id: card.id, ref: card.ref, provider: card.provider, status: card.status, last4: card.last4, brand: card.brand, error: card.error } : null,
+      sms: { connected: !!ingest, since: ingest?.created_at ?? null },
       settings,
       piggy,
       inFlight: inflight,
@@ -279,6 +295,7 @@ export function createStore(db) {
 
   return {
     getUser, createUser, findUserByEmail, createSession, userBySession, deleteSession,
+    setIngestToken, deleteIngestToken, userByIngestToken,
     createCard, getCard, cardByRef, activeCard, latestCard, updateCard,
     addPayment, claimNow, getPurchase, purchasesByStatus, markPurchase, failPurchase,
     updateSettings, updateGoal, getState, demoUserId, seedDemo, ensureDemo,

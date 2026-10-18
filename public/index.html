@@ -93,6 +93,35 @@
       <details class="note" id="cardRefBox" hidden><summary>Идентификатор карты для банка</summary><code id="cardRef"></code></details>
     </div>
 
+    <div class="card" id="smsCard" hidden>
+      <div class="row"><span class="label">Уведомления банка</span><span class="pill" id="smsStatus"></span></div>
+      <span class="note" id="smsText"></span>
+      <div class="linkbox" id="smsLinkBox" hidden>
+        <code id="smsUrl"></code>
+        <button class="btn secondary" id="smsCopy" type="button">Скопировать ссылку</button>
+        <span class="note">Ссылка показывается один раз. Никому её не передавайте: по ней можно добавлять оплаты в вашу копилку.</span>
+      </div>
+      <details class="note howto">
+        <summary>Как настроить на iPhone</summary>
+        <ol>
+          <li>Приложение «Команды» → «Автоматизация» → «+» → «Сообщение».</li>
+          <li>«Отправитель» — ваш банк, «Сообщение содержит» — например, «Oplata» или «Оплата». Выберите «Запускать сразу».</li>
+          <li>Добавьте действие «Получить содержимое URL»: вставьте ссылку, метод POST, тело запроса JSON, ключ <b>text</b> — значение «Входные данные быстрой команды» (текст сообщения).</li>
+        </ol>
+        Работает с SMS. Push-уведомления приложений банков «Команды» читать не умеют.
+      </details>
+      <details class="note howto">
+        <summary>Как настроить на Android</summary>
+        <ol>
+          <li>Установите MacroDroid → «Добавить макрос».</li>
+          <li>Триггер: «Получено SMS» от банка или «Уведомление» от приложения банка.</li>
+          <li>Действие: «HTTP-запрос», метод POST, ссылка выше, тело — текст SMS или уведомления (переменная [sms_message] или [notification]).</li>
+        </ol>
+      </details>
+      <button class="btn" id="smsConnect" type="button">Подключить уведомления</button>
+      <button class="btn secondary" id="smsOff" type="button" hidden>Отключить</button>
+    </div>
+
     <div class="card" id="emuCard">
       <span class="label">Эмулятор кассы</span>
       <label class="amount" for="amountInput"><input id="amountInput" inputmode="decimal" autocomplete="off" value="6,40" aria-label="Сумма покупки, BYN"><span>BYN</span></label>

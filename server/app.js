@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createStore, HttpError } from './db.js';
@@ -9,6 +9,7 @@ import { parseAmount, MAX_PAYMENT } from './engine.js';
 import { hashPassword, verifyPassword, newToken, hashToken, validateCredentials, createLimiter, SESSION_TTL_MS } from './auth.js';
 import { createPurchaser } from './purchaser.js';
 import { createPaperBroker } from './broker.js';
+import { parseBankMessage } from './sms.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../public/', import.meta.url));
 const MIME = {
@@ -91,6 +92,7 @@ export async function createApp(db, {
   const purchaser = createPurchaser({ store, rates, payments, broker, now });
   const limiter = createLimiter({ now });
   const signups = createLimiter({ limit: 20, windowMs: 60 * 60_000, now });
+  const ingests = createLimiter({ limit: 30, windowMs: 60_000, now });
   // За прокси Railway адрес соединения у всех один — берём клиента из X-Forwarded-For
   const clientIp = (req) => String(req.headers['x-forwarded-for'] ?? '').split(',')[0].trim() || req.socket.remoteAddress;
 
@@ -240,6 +242,46 @@ export async function createApp(db, {
       return store.getState(user.id, rates.cached());
     },
 
+    // ---------- уведомления банка с телефона ----------
+
+    // Личная ссылка, на которую телефон пересылает SMS/push банка. Показывается один раз;
+    // повторный вызов выдаёт новую, старая перестаёт работать.
+    'POST /api/sms-link': async ({ req, user }) => {
+      requireReal(user);
+      const token = newToken();
+      await store.setIngestToken(user.id, hashToken(token));
+      return { url: `${baseUrl(req)}/api/ingest/${token}`, state: await store.getState(user.id, rates.cached()) };
+    },
+
+    'DELETE /api/sms-link': async ({ user }) => {
+      requireReal(user);
+      await store.deleteIngestToken(user.id);
+      return store.getState(user.id, rates.cached());
+    },
+
+    // Текст уведомления — телом запроса (text/plain) или { "text": "…" }.
+    // Отвечаем 200 и на то, что не покупка: «Команды» и MacroDroid не должны показывать ошибку на каждое SMS банка.
+    'POST /api/ingest/:token': async ({ req, params }) => {
+      const tokenHash = hashToken(params.token);
+      ingests.check(tokenHash);
+      ingests.fail(tokenHash);
+      const user = await store.userByIngestToken(tokenHash);
+      if (!user) throw new HttpError(404, 'unknown link');
+      const raw = await readRaw(req);
+      const text = String(/^\s*\{/.test(raw) ? parseJson(raw).text ?? '' : raw).slice(0, 1000);
+      const m = parseBankMessage(text);
+      if (!m.ok) return { ignored: m.reason };
+      if (m.currency !== 'BYN') return { ignored: 'currency ' + m.currency };
+      if (m.amount > MAX_PAYMENT) return { ignored: 'amount too large' };
+      // Одно и то же уведомление, пересланное дважды, засчитывается один раз
+      const externalId = 'sms:' + createHash('sha256').update(`${user.id}|${text.trim()}`).digest('hex');
+      const card = await store.activeCard(user.id);
+      const r = await store.addPayment(user.id, { merchant: m.merchant, amount: m.amount, source: 'sms', externalId, cardId: card?.id ?? null });
+      if (r.duplicate) return { duplicate: true };
+      if (r.purchase) purchaser.process(r.purchase).catch((err) => console.error('[ingest] purchase', err));
+      return { ok: true, merchant: m.merchant, amount: m.amount, roundup: r.payment.roundup };
+    },
+
     // ---------- вебхуки ----------
 
     // Банк-партнёр присылает каждую оплату по карте. Формат и подпись — в README.
@@ -289,7 +331,7 @@ export async function createApp(db, {
     const [method, path] = key.split(' ');
     const names = [];
     const re = new RegExp('^' + path.replace(/:(\w+)/g, (_, n) => { names.push(n); return '([^/]+)'; }) + '$');
-    return { method, re, names, handler, open: path.startsWith('/api/webhooks/') || path.startsWith('/api/auth/') || path === '/api/health' || path === '/api/config' };
+    return { method, re, names, handler, open: path.startsWith('/api/webhooks/') || path.startsWith('/api/ingest/') || path.startsWith('/api/auth/') || path === '/api/health' || path === '/api/config' };
   });
 
   const server = createServer(async (req, res) => {
